@@ -1,0 +1,131 @@
+import json, re, operator
+from typing import Annotated, TypedDict
+from langgraph.graph import StateGraph, START, END
+from config import llm
+import datastore
+import tools
+
+class State(TypedDict):
+    question: str
+    route: str
+    evidence: Annotated[list, operator.add]
+    calculations: list
+    draft: str
+    grounded: bool
+    retries: int
+    final: dict
+
+def route(state):
+    label = llm.invoke(
+        "Classify which data this question needs. Reply exactly one word: "
+        "CALC, SEMANTIC, or HYBRID.\n"
+        "CALC = computed from numeric datasets or article word-counts: prices, volumes, "
+        "returns, drawdowns, rates, dataset statistics, counting articles.\n"
+        "SEMANTIC = only about news content: what articles say, events, stories, opinions.\n"
+        "HYBRID = needs BOTH, e.g. retrieve an article AND use rates/prices/returns.\n"
+        "Question: " + state["question"]).content.strip().upper()
+    return {"route": label if label in ("CALC", "SEMANTIC", "HYBRID") else "HYBRID"}
+
+def analyze(state):
+    resp = llm.invoke(
+        "Choose the tool call(s) (max 4) that answer the question. Reply ONLY a JSON array, "
+        'e.g. [{"tool":"asx_basket_return","args":{"start":"2019-06-05","end":"2019-06-12",'
+        '"exclude":["Tabcorp"]}}].\n'
+        "Available tools:\n" + tools.CATALOG +
+        "\nQuestion: " + state["question"]).content
+    try:
+        calls = json.loads(re.search(r"\[.*\]", resp, re.S).group())
+    except Exception:
+        calls = []
+    calcs, ev = [], []
+    for c in calls[:4]:
+        try:
+            result = tools.TOOLS[c["tool"]](**c.get("args", {}))
+            calcs.append({"tool": c["tool"], "args": c.get("args", {}), "result": result})
+            ev.append({"source": f"tool:{c['tool']}", "record": json.dumps(result)[:900]})
+        except Exception as e:
+            calcs.append({"tool": c.get("tool"), "args": c.get("args", {}), "error": str(e)})
+    return {"calculations": calcs, "evidence": ev}
+
+def semantic_search(state):
+    ev = datastore.search(state["question"], k=6, kind="news")
+    if len(ev) < 3:
+        ev = ev + datastore.search(state["question"], k=6)
+    seen, out = set(), []
+    for e in ev:
+        if e["source"] not in seen:
+            seen.add(e["source"])
+            out.append(e)
+    return {"evidence": out[:6]}
+
+def combine(state):
+    retry_note = ""
+    if state["retries"] > 0:
+        retry_note = ("NOTE: your previous draft was rejected. Answer from the evidence and "
+                      "cite [source] tags copied exactly.\n")
+    draft = llm.invoke(
+        "You are a market data analyst. Answer the question using ONLY the evidence and "
+        "calculations below — never your own outside knowledge.\n"
+        "Rules:\n"
+        "1. Cite the [source] tag in square brackets, copied verbatim, for every claim, "
+        "e.g. [tool:rba_summary] or [AFR_20190701-20190731.json#0].\n"
+        "2. Numbers must come only from the calculations or evidence.\n"
+        "3. State key numbers explicitly: counts, percentages to 2 decimals, large numbers "
+        "with thousands separators (e.g. 11,635,671), dates and tickers by name.\n"
+        "4. You MAY draw simple analytical inferences FROM the evidence text — e.g. classify "
+        "an article's sentiment or the likely market direction it implies — as long as the "
+        "inference is clearly based on cited evidence.\n"
+        "5. Approximate references like 'mid January' are fine — use the closest evidence "
+        "and say which date(s) you used.\n"
+        "6. Answer with what the data shows, even if partial; note gaps honestly.\n"
+        "7. Reply INSUFFICIENT only when NO evidence relates to the question at all.\n"
+        "8. Be concise but complete: cover every part of the question.\n"
+        + retry_note +
+        f"Evidence: {json.dumps(state['evidence'])}\n"
+        f"Calculations: {json.dumps(state.get('calculations', []))}\n"
+        f"Question: {state['question']}").content
+    return {"draft": draft}
+
+def ground_check(state):
+    cited = re.findall(r"\[([^\]]+)\]", state["draft"])
+    known = {e["source"] for e in state["evidence"]}
+    valid = [c for c in cited if c in known]
+    insufficient = state["draft"].strip().upper().startswith("INSUFFICIENT")
+    grounded = bool(valid) and len(valid) >= max(1, len(cited) // 2) and not insufficient
+    return {"grounded": grounded, "retries": state["retries"] + (0 if grounded else 1)}
+
+def answer(state):
+    cited = list(dict.fromkeys(re.findall(r"\[([^\]]+)\]", state["draft"])))
+    known = {e["source"]: e for e in state["evidence"]}
+    used = [known[c] for c in cited if c in known]
+    citation_rate = len(used) / len(cited) if cited else 0.0
+    coverage = min(1.0, len(used) / 2)
+    math_ok = 1.0 if state.get("calculations") else 0.7
+    conf = round(0.45 * coverage + 0.4 * citation_rate + 0.15 * math_ok, 2)
+    insufficient = state["draft"].strip().upper().startswith("INSUFFICIENT")
+    return {"final": {"answer": state["draft"],
+                      "evidence": used,
+                      "calculations": state.get("calculations", []),
+                      "confidence": 0.15 if insufficient else conf,
+                      "abstained": insufficient or not state["grounded"]}}
+
+g = StateGraph(State)
+for name, fn in [("route", route), ("analyze", analyze),
+                 ("semantic_search", semantic_search), ("combine", combine),
+                 ("ground_check", ground_check), ("answer", answer)]:
+    g.add_node(name, fn)
+
+g.add_edge(START, "route")
+g.add_conditional_edges("route",
+    lambda s: "semantic_search" if s["route"] == "SEMANTIC" else "analyze",
+    {"analyze": "analyze", "semantic_search": "semantic_search"})
+g.add_conditional_edges("analyze",
+    lambda s: "semantic_search" if s["route"] == "HYBRID" else "combine",
+    {"semantic_search": "semantic_search", "combine": "combine"})
+g.add_edge("semantic_search", "combine")
+g.add_edge("combine", "ground_check")
+g.add_conditional_edges("ground_check",
+    lambda s: "answer" if s["grounded"] or s["retries"] >= 2 else "combine",
+    {"answer": "answer", "combine": "combine"})
+g.add_edge("answer", END)
+graph = g.compile()

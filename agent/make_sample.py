@@ -1,6 +1,6 @@
 import json, os, glob, sys
 
-SRC = sys.argv[1]
+SRC = sys.argv[1] if len(sys.argv) > 1 else "."
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 10
 outdir = os.path.expanduser("~/sample")
 os.makedirs(outdir, exist_ok=True)
@@ -14,14 +14,14 @@ for p in paths:
     recs = []
     try:
         if p.endswith(".jsonl"):
-            with open(p) as f:
+            with open(p, encoding="utf-8-sig") as f:
                 for i, line in enumerate(f):
                     if i >= N:
                         break
                     if line.strip():
                         recs.append(json.loads(line))
         else:
-            d = json.load(open(p))
+            d = json.load(open(p, encoding="utf-8-sig"))
             recs = d[:N] if isinstance(d, list) else [d]
     except Exception as e:
         print("skip", base, e)
