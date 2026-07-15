@@ -27,36 +27,58 @@ def route(state):
         "Classify which data this question needs. Reply exactly one word: "
         "CALC, SEMANTIC, or HYBRID.\n"
         "CALC = computed from the datasets: prices, volumes, returns, drawdowns, rates, "
-        "counting articles, dataset dimensions/coverage, or whether the data can support "
-        "an analysis.\n"
+        "returns around rate decisions, counting articles, dataset dimensions/coverage, "
+        "or whether the data can support an analysis.\n"
         "SEMANTIC = only about what news articles say: events, stories, opinions.\n"
-        "HYBRID = needs BOTH, e.g. retrieve an article AND use rates/prices/returns.\n"
+        "HYBRID = ONLY when the question explicitly involves BOTH a news article's content "
+        "AND numeric data (e.g. retrieve an article and use rates or returns).\n"
         "Question: " + state["question"]).content.strip().upper()
     return {"route": label if label in ("CALC", "SEMANTIC", "HYBRID") else "HYBRID"}
 
 def analyze(state):
-    resp = llm.invoke(
-        "Choose the tool call(s) (max 4) that answer the question. Reply ONLY a JSON array, "
-        'e.g. [{"tool":"asx_basket_return","args":{"start":"2019-06-05","end":"2019-06-12",'
-        '"exclude":["Tabcorp"]}}].\n'
-        "If the question involves windows around rate decisions, FIRST call rba_decisions "
-        "to get the real dates — never guess dates.\n"
-        "Available tools:\n" + tools.CATALOG +
-        "\nQuestion: " + state["question"]).content
-    try:
-        calls = json.loads(re.search(r"\[.*\]", resp, re.S).group())
-    except Exception:
-        calls = []
     calcs, ev = [], []
-    for c in calls[:4]:
+    for round_no in range(3):
+        if round_no == 0:
+            guidance = (
+                "If the question involves windows around rate decisions, FIRST call "
+                "rba_decisions to get the real dates — never guess dates. You will get "
+                "follow-up rounds to request more calculations from the results.\n")
+        else:
+            guidance = (
+                "Results so far: " + json.dumps(calcs)[:1200] + "\n"
+                "Go through EVERY part of the question and check whether the results above "
+                "already contain it. Output the tool calls for every part still missing.\n"
+                "Worked example: if the question asks for one-week basket returns after "
+                "each cut, and the results show cut dates 2019-06-05, 2019-07-03 and "
+                "2019-10-02, you MUST reply:\n"
+                '[{"tool":"asx_basket_return","args":{"start":"2019-06-05","end":"2019-06-12","exclude":["Tabcorp"]}},'
+                '{"tool":"asx_basket_return","args":{"start":"2019-07-03","end":"2019-07-10","exclude":["Tabcorp"]}},'
+                '{"tool":"asx_basket_return","args":{"start":"2019-10-02","end":"2019-10-09","exclude":["Tabcorp"]}}]\n'
+                "Reply [] ONLY if every part of the question is already computed.\n")
+        resp = llm.invoke(
+            "Choose the tool call(s) that help answer the question. Reply ONLY a JSON "
+            'array, e.g. [{"tool":"asx_yearly_returns","args":{"year":2018,'
+            '"exclude":["Tabcorp"]}}].\n'
+            + guidance +
+            "Available tools:\n" + tools.CATALOG +
+            "\nQuestion: " + state["question"]).content
         try:
-            result = tools.TOOLS[c["tool"]](**c.get("args", {}))
-            calcs.append({"tool": c["tool"], "args": c.get("args", {}), "result": result})
-            if isinstance(result, dict) and "error" in result:
-                continue  # errors are logged in calculations but are NOT citable evidence
-            ev.append({"source": f"tool:{c['tool']}", "record": json.dumps(result)[:900]})
-        except Exception as e:
-            calcs.append({"tool": c.get("tool"), "args": c.get("args", {}), "error": str(e)})
+            calls = json.loads(re.search(r"\[.*\]", resp, re.S).group())
+        except Exception:
+            calls = []
+        if not calls:
+            break
+        for c in calls[:4]:
+            if len(calcs) >= 10:
+                break
+            try:
+                result = tools.TOOLS[c["tool"]](**c.get("args", {}))
+                calcs.append({"tool": c["tool"], "args": c.get("args", {}), "result": result})
+                if isinstance(result, dict) and "error" in result:
+                    continue  # errors are logged but are NOT citable evidence
+                ev.append({"source": f"tool:{c['tool']}", "record": json.dumps(result)[:900]})
+            except Exception as e:
+                calcs.append({"tool": c.get("tool"), "args": c.get("args", {}), "error": str(e)})
     return {"calculations": calcs, "evidence": ev}
 
 def semantic_search(state):
