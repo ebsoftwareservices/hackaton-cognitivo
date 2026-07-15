@@ -26,9 +26,10 @@ def route(state):
     label = llm.invoke(
         "Classify which data this question needs. Reply exactly one word: "
         "CALC, SEMANTIC, or HYBRID.\n"
-        "CALC = computed from numeric datasets or article word-counts: prices, volumes, "
-        "returns, drawdowns, rates, dataset statistics, counting articles.\n"
-        "SEMANTIC = only about news content: what articles say, events, stories, opinions.\n"
+        "CALC = computed from the datasets: prices, volumes, returns, drawdowns, rates, "
+        "counting articles, dataset dimensions/coverage, or whether the data can support "
+        "an analysis.\n"
+        "SEMANTIC = only about what news articles say: events, stories, opinions.\n"
         "HYBRID = needs BOTH, e.g. retrieve an article AND use rates/prices/returns.\n"
         "Question: " + state["question"]).content.strip().upper()
     return {"route": label if label in ("CALC", "SEMANTIC", "HYBRID") else "HYBRID"}
@@ -38,6 +39,8 @@ def analyze(state):
         "Choose the tool call(s) (max 4) that answer the question. Reply ONLY a JSON array, "
         'e.g. [{"tool":"asx_basket_return","args":{"start":"2019-06-05","end":"2019-06-12",'
         '"exclude":["Tabcorp"]}}].\n'
+        "If the question involves windows around rate decisions, FIRST call rba_decisions "
+        "to get the real dates — never guess dates.\n"
         "Available tools:\n" + tools.CATALOG +
         "\nQuestion: " + state["question"]).content
     try:
@@ -78,7 +81,8 @@ def combine(state):
         "Rules:\n"
         "1. Cite the [source] tag in square brackets, copied verbatim, for every claim, "
         "e.g. [tool:rba_summary] or [AFR_20190701-20190731.json#0].\n"
-        "2. Numbers must come only from the calculations or evidence.\n"
+        "2. Numbers AND dates must come only from the calculations or evidence — never "
+        "invent, estimate, or recall a date or figure that is not in the evidence.\n"
         "3. State key numbers explicitly: counts, percentages to 2 decimals, large numbers "
         "with thousands separators (e.g. 11,635,671), dates and tickers by name.\n"
         "4. You MAY draw simple analytical inferences (sentiment, likely market direction) "

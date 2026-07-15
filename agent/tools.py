@@ -124,6 +124,25 @@ def rba_summary(start=None, end=None):
             "per_year_changes": per_year}
 
 
+def rba_decisions(start=None, end=None, changed_only=True):
+    """Exact dates of RBA decisions — use these real dates, never guess dates."""
+    if RBA.empty:
+        return {"error": "RBA data not loaded"}
+    df = RBA
+    if start:
+        df = df[df["date"] >= _dt(start)]
+    if end:
+        df = df[df["date"] <= _dt(end)]
+    if changed_only:
+        df = df[df["change"] != 0]
+    if df.empty:
+        return {"error": "no decisions in that range"}
+    decs = [{"date": str(r["date"].date()), "change_pp": float(r["change"]),
+             "new_target_pct": float(r["target"])} for _, r in df.iterrows()]
+    truncated = len(decs) > 24
+    return {"count": len(decs), "decisions": decs[:24], "truncated": truncated}
+
+
 def rba_rate_on(date):
     if RBA.empty:
         return {"error": "RBA data not loaded"}
@@ -295,7 +314,8 @@ def afr_count(terms, year=None):
 
 
 def afr_find(query, date=None):
-    """Find AFR article(s) by title text (case-insensitive substring), optionally near a date."""
+    """Find AFR article(s) by title text. If a date is given, only an article on that exact
+    date counts — near-misses are reported but not returned as the article."""
     recs = _afr_records()
     if not recs:
         return {"error": "AFR data not loaded"}
@@ -308,10 +328,13 @@ def afr_find(query, date=None):
     if date:
         d8 = _dt(date).strftime("%Y%m%d")
         exact = [r for r in matches if r["date"] == d8]
-        matches = exact or matches
+        if not exact:
+            return {"error": f"no AFR article matching '{query}' on {date} in the loaded AFR data",
+                    "near_matches": [{"date": r["date"], "headline": r["headline"]}
+                                     for r in matches[:3]]}
+        matches = exact
     if not matches:
-        return {"error": f"no AFR article matching '{query}'" +
-                         (f" on {date}" if date else "") + " in the loaded AFR data"}
+        return {"error": f"no AFR article matching '{query}' in the loaded AFR data"}
     return {"matches": [{"date": r["date"], "headline": r["headline"],
                          "excerpt": r["blob"][:700]} for r in matches[:2]]}
 
@@ -354,7 +377,8 @@ def dataset_coverage():
     return out or {"error": "no datasets loaded"}
 
 
-TOOLS = {"rba_summary": rba_summary, "rba_rate_on": rba_rate_on,
+TOOLS = {"rba_summary": rba_summary, "rba_decisions": rba_decisions,
+         "rba_rate_on": rba_rate_on,
          "asx_overview": asx_overview, "asx_yearly_returns": asx_yearly_returns,
          "asx_avg_volume": asx_avg_volume, "asx_price": asx_price,
          "asx_period_change": asx_period_change, "asx_basket_return": asx_basket_return,
@@ -362,7 +386,8 @@ TOOLS = {"rba_summary": rba_summary, "rba_rate_on": rba_rate_on,
          "afr_find": afr_find, "afr_sentiment": afr_sentiment,
          "dataset_coverage": dataset_coverage}
 
-CATALOG = """rba_summary(start?, end?) -> RBA decisions: changed/increases/decreases counts, start/end target %, total change in pp, per-year cuts/hikes.
+CATALOG = """rba_summary(start?, end?) -> RBA decision counts, start/end target %, total change in pp, per-year cuts/hikes. NOTE: gives counts only, not dates.
+rba_decisions(start?, end?) -> the EXACT dates of rate cuts/hikes with change and new target. ALWAYS use this to get real decision dates before computing windows around cuts — never guess dates.
 rba_rate_on(date) -> the cash-rate target in force on a given date.
 asx_overview() -> tickers, company names, rows per ticker, common date range.
 asx_yearly_returns(year, exclude?) -> per-ticker % return for a year, best/worst, simple average. exclude accepts tickers or company names, e.g. ["Tabcorp"].
@@ -373,5 +398,5 @@ asx_basket_return(start, end, exclude?) -> per-ticker AND equal-weight basket % 
 asx_drawdowns(exclude?, top?) -> worst maximum drawdowns with peak/trough dates.
 afr_count(terms, year?) -> whole-word once-per-record count of a word (or list of words, OR-matched) across AFR articles; per-year and peak months.
 afr_find(query, date?) -> retrieve AFR article(s) by headline text, with excerpt.
-afr_sentiment(query, date?) -> retrieve an AFR article AND classify its financial-market sentiment (positive/negative/mixed) plus likely ASX direction, using the team's fine-tuned finance model. Use for sentiment questions.
-dataset_coverage() -> date ranges of RBA, ASX, AFR datasets. Use for "can the data support X" questions."""
+afr_sentiment(query, date?) -> retrieve an AFR article AND classify its sentiment (positive/negative/mixed) plus likely ASX direction, using the team's fine-tuned finance model. Use for sentiment questions.
+dataset_coverage() -> date ranges of RBA, ASX, AFR datasets. Use for questions about dataset dimensions, coverage, or whether the data can support an analysis."""
