@@ -29,10 +29,42 @@ def _find_files(pattern):
 
 
 def _dt(x):
-    s = str(x)
+    s = str(x).strip()
     if re.match(r"^\d{4}-", s):
         return pd.to_datetime(s)
     return pd.to_datetime(s, dayfirst=True)
+
+
+def _dt_start(x):
+    s = str(x).strip()
+    if re.fullmatch(r"\d{4}", s):
+        return pd.to_datetime(s + "-01-01")
+    if re.fullmatch(r"\d{4}-\d{2}", s):
+        return pd.to_datetime(s + "-01")
+    return _dt(s)
+
+
+def _dt_end(x):
+    s = str(x).strip()
+    if re.fullmatch(r"\d{4}", s):
+        return pd.to_datetime(s + "-12-31")
+    if re.fullmatch(r"\d{4}-\d{2}", s):
+        return pd.to_datetime(s + "-01") + pd.offsets.MonthEnd(0)
+    return _dt(s)
+
+
+def _clip(df, start=None, end=None):
+    """Filter df by date range. Bare years/months expand to full periods;
+    swapped bounds are corrected."""
+    s = _dt_start(start) if start else None
+    e = _dt_end(end) if end else None
+    if s is not None and e is not None and s > e:
+        s, e = e, s
+    if s is not None:
+        df = df[df["date"] >= s]
+    if e is not None:
+        df = df[df["date"] <= e]
+    return df
 
 
 def _nice_date(d):
@@ -99,13 +131,9 @@ def _excluded(ticker, exclude):
 
 # ================= tools =================
 def rba_summary(start=None, end=None):
-    df = RBA
-    if df.empty:
+    if RBA.empty:
         return {"error": "RBA data not loaded"}
-    if start:
-        df = df[df["date"] >= _dt(start)]
-    if end:
-        df = df[df["date"] <= _dt(end)]
+    df = _clip(RBA, start, end)
     if df.empty:
         return {"error": "no RBA rows in that range"}
     changed = df[df["change"] != 0]
@@ -128,11 +156,7 @@ def rba_decisions(start=None, end=None, changed_only=True):
     """Exact dates of RBA decisions — use these real dates, never guess dates."""
     if RBA.empty:
         return {"error": "RBA data not loaded"}
-    df = RBA
-    if start:
-        df = df[df["date"] >= _dt(start)]
-    if end:
-        df = df[df["date"] <= _dt(end)]
+    df = _clip(RBA, start, end)
     if changed_only:
         df = df[df["change"] != 0]
     if df.empty:
@@ -196,11 +220,7 @@ def asx_yearly_returns(year, exclude=None):
 def asx_avg_volume(exclude=None, start=None, end=None):
     if ASX.empty:
         return {"error": "ASX data not loaded"}
-    df = ASX
-    if start:
-        df = df[df["date"] >= _dt(start)]
-    if end:
-        df = df[df["date"] <= _dt(end)]
+    df = _clip(ASX, start, end)
     out = {}
     for t, g in df.groupby("ticker"):
         if _excluded(t, exclude):
@@ -233,7 +253,7 @@ def asx_period_change(ticker, start, end):
         return {"error": "ASX data not loaded"}
     tu = str(ticker).upper().replace(".AX", "")
     g = ASX[[tu in t.upper() or tu in NAMES.get(t, "").upper() for t in ASX["ticker"]]]
-    g = g[(g["date"] >= _dt(start)) & (g["date"] <= _dt(end))].sort_values("date")
+    g = _clip(g, start, end).sort_values("date")
     if len(g) < 2:
         return {"error": "not enough rows in that range"}
     a, b = g.iloc[0], g.iloc[-1]
@@ -251,7 +271,7 @@ def asx_basket_return(start, end, exclude=None):
     for t, g in ASX.groupby("ticker"):
         if _excluded(t, exclude):
             continue
-        g = g[(g["date"] >= _dt(start)) & (g["date"] <= _dt(end))].sort_values("date")
+        g = _clip(g, start, end).sort_values("date")
         if len(g) < 2:
             continue
         raw[t] = float((g.iloc[-1]["close"] / g.iloc[0]["close"] - 1) * 100)
@@ -386,7 +406,7 @@ TOOLS = {"rba_summary": rba_summary, "rba_decisions": rba_decisions,
          "afr_find": afr_find, "afr_sentiment": afr_sentiment,
          "dataset_coverage": dataset_coverage}
 
-CATALOG = """rba_summary(start?, end?) -> RBA decision counts, start/end target %, total change in pp, per-year cuts/hikes. NOTE: gives counts only, not dates.
+CATALOG = """rba_summary(start?, end?) -> RBA decision counts, start/end target %, total change in pp, per-year cuts/hikes. Bare years OK: start="2011", end="2013" covers all of 2011-2013. NOTE: gives counts only, not dates.
 rba_decisions(start?, end?) -> the EXACT dates of rate cuts/hikes with change and new target. ALWAYS use this to get real decision dates before computing windows around cuts — never guess dates.
 rba_rate_on(date) -> the cash-rate target in force on a given date.
 asx_overview() -> tickers, company names, rows per ticker, common date range.
