@@ -13,11 +13,11 @@ FINANCE_BASE_URL = "http://localhost:8001/v1"
 FINANCE_MODEL = "nemotron-8b-finance"
 
 _llm = ChatOpenAI(base_url=BASE_URL, api_key="none", model=MODEL,
-                  temperature=0.2, max_tokens=1000,
+                  temperature=0.0, max_tokens=1000,
                   extra_body={"chat_template_kwargs": {"enable_thinking": False}})
 
 _llm_finance = ChatOpenAI(base_url=FINANCE_BASE_URL, api_key="none", model=FINANCE_MODEL,
-                          temperature=0.1, max_tokens=400)
+                          temperature=0.0, max_tokens=400)
 
 class _CleanLLM:
     """Strips <think> reasoning blocks so .content is only the real answer."""
