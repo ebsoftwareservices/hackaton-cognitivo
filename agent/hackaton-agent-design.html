@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evidence-Grounded Market Agent — Design Sample</title>
+<style>
+  :root{
+    --bg:#0f1117; --panel:#181b24; --panel2:#1f2330; --text:#e6e9f0; --muted:#9aa3b5;
+    --accent:#5b8def; --green:#3fb98c; --amber:#e0a83c; --red:#e06c6c; --border:#2a2f3e;
+    --code-bg:#12141c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);line-height:1.55}
+  .wrap{max-width:980px;margin:0 auto;padding:32px 24px 80px}
+  h1{font-size:1.7rem;margin:0 0 4px}
+  h2{font-size:1.25rem;margin:40px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--border);color:var(--accent)}
+  h3{font-size:1.02rem;margin:22px 0 8px}
+  p{margin:8px 0;color:var(--text)}
+  .sub{color:var(--muted);font-size:.95rem;margin-bottom:24px}
+  .pill{display:inline-block;padding:2px 10px;border-radius:999px;font-size:.75rem;font-weight:600;margin-right:6px}
+  .pill.blue{background:#24314d;color:#8fb3ff}.pill.green{background:#1e3a30;color:#6fd8ac}
+  .pill.amber{background:#3d3117;color:#ecc06a}.pill.red{background:#3d2222;color:#f09a9a}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:16px 0}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 18px}
+  .card h4{margin:0 0 6px;font-size:.95rem}
+  .card p{font-size:.88rem;color:var(--muted);margin:0}
+  .card .num{font-size:.72rem;color:var(--accent);font-weight:700;letter-spacing:.08em}
+  pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:14px 16px;overflow-x:auto;font-size:.82rem;line-height:1.5}
+  code{font-family:'Cascadia Code',Consolas,monospace;color:#cdd6e8}
+  .k{color:#7aa2f7}.s{color:#9ece6a}.c{color:#565f89;font-style:italic}.f{color:#e0af68}
+  .mermaid{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;margin:16px 0;text-align:center}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:.88rem}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border)}
+  th{color:var(--muted);font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em}
+  .callout{background:var(--panel2);border-left:3px solid var(--accent);border-radius:0 8px 8px 0;padding:12px 16px;margin:14px 0;font-size:.9rem}
+  .callout.warn{border-left-color:var(--amber)}
+  .callout b{color:var(--accent)} .callout.warn b{color:var(--amber)}
+  ul{margin:8px 0;padding-left:22px} li{margin:4px 0;font-size:.92rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Evidence-Grounded Market Agent</h1>
+<p class="sub">Design sample &mdash; retrieve &rarr; calculate (reproducibly) &rarr; combine cross-dataset evidence &rarr; answer with calibrated confidence. Built for the easy/medium/hard, single- &amp; cross-dataset benchmark.</p>
+
+<span class="pill blue">LangGraph</span>
+<span class="pill green">Local NIM LLM</span>
+<span class="pill amber">Deterministic math</span>
+<span class="pill red">Calibrated JSON output</span>
+
+<h2>1 &middot; The four requirements &rarr; four components</h2>
+<div class="grid">
+  <div class="card"><div class="num">R1 — RETRIEVE</div><h4>Dataset Router + Retrievers</h4><p>A planner decomposes the question and picks which dataset(s) to query (rates, stocks, …). Every retrieved record keeps a <b>source tag</b>: <code>rates.json#2026-05-12</code>.</p></div>
+  <div class="card"><div class="num">R2 — CALCULATE</div><h4>Deterministic Calculator Tool</h4><p>The LLM never does arithmetic. All math (Δ%, mean, correlation, CAGR) runs in Python with fixed rounding — same question, same number, every run. Each calculation is logged: <code>inputs → operation → result</code>.</p></div>
+  <div class="card"><div class="num">R3 — COMBINE</div><h4>Evidence Ledger (graph state)</h4><p>Sub-answers from each dataset accumulate in a shared <code>evidence[]</code> list. Cross-dataset questions join on dates/entities in code, then the LLM synthesizes over the joined evidence only.</p></div>
+  <div class="card"><div class="num">R4 — ANSWER</div><h4>Calibrated Structured Output</h4><p>Final node emits fixed JSON: answer + evidence citations + confidence. Confidence is <b>computed</b> from evidence coverage &amp; agreement, not vibes — and the agent abstains when coverage is low.</p></div>
+</div>
+
+<h2>2 &middot; LangGraph workflow</h2>
+<div style="background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px;margin:16px 0;">
+<svg viewBox="0 0 960 400" width="100%" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI,system-ui,sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#9aa3b5"/>
+    </marker>
+  </defs>
+
+  <!-- START pill -->
+  <rect x="6" y="182" width="60" height="34" rx="17" fill="#1f2330" stroke="#9aa3b5"/>
+  <text x="36" y="203" text-anchor="middle" fill="#e6e9f0" font-size="10">question</text>
+
+  <!-- plan -->
+  <rect x="78" y="161" width="95" height="76" rx="8" fill="#24314d" stroke="#5b8def"/>
+  <text x="125" y="186" text-anchor="middle" fill="#e6e9f0" font-size="13" font-weight="600">plan</text>
+  <text x="125" y="204" text-anchor="middle" fill="#9aa3b5" font-size="9">decompose into</text>
+  <text x="125" y="217" text-anchor="middle" fill="#9aa3b5" font-size="9">sub-queries</text>
+
+  <!-- route diamond -->
+  <polygon points="233,157 282,199 233,241 184,199" fill="#1f2330" stroke="#5b8def"/>
+  <text x="233" y="196" text-anchor="middle" fill="#e6e9f0" font-size="11.5" font-weight="600">route</text>
+  <text x="233" y="210" text-anchor="middle" fill="#9aa3b5" font-size="8.5">by type</text>
+  <text x="290" y="228" fill="#9aa3b5" font-size="9">hybrid → both lanes</text>
+
+  <!-- CALC lane -->
+  <rect x="312" y="60" width="108" height="72" rx="8" fill="#24314d" stroke="#5b8def"/>
+  <text x="366" y="84" text-anchor="middle" fill="#e6e9f0" font-size="12.5" font-weight="600">retrieve</text>
+  <text x="366" y="101" text-anchor="middle" fill="#9aa3b5" font-size="9">structured lookup</text>
+  <text x="366" y="114" text-anchor="middle" fill="#9aa3b5" font-size="9">tag sources</text>
+
+  <rect x="448" y="60" width="108" height="72" rx="8" fill="#3d3117" stroke="#e0a83c"/>
+  <text x="502" y="84" text-anchor="middle" fill="#e6e9f0" font-size="12.5" font-weight="600">calculate</text>
+  <text x="502" y="101" text-anchor="middle" fill="#9aa3b5" font-size="9">deterministic math</text>
+  <text x="502" y="114" text-anchor="middle" fill="#9aa3b5" font-size="9">log every op</text>
+
+  <!-- SEMANTIC lane -->
+  <rect x="312" y="268" width="108" height="72" rx="8" fill="#16323a" stroke="#4db8c8"/>
+  <text x="366" y="292" text-anchor="middle" fill="#e6e9f0" font-size="12.5" font-weight="600">semantic search</text>
+  <text x="366" y="309" text-anchor="middle" fill="#9aa3b5" font-size="9">FAISS top-k over</text>
+  <text x="366" y="322" text-anchor="middle" fill="#9aa3b5" font-size="9">verbalized records</text>
+
+  <!-- combine -->
+  <rect x="565" y="161" width="100" height="76" rx="8" fill="#24314d" stroke="#5b8def"/>
+  <text x="615" y="186" text-anchor="middle" fill="#e6e9f0" font-size="13" font-weight="600">combine</text>
+  <text x="615" y="204" text-anchor="middle" fill="#9aa3b5" font-size="9">merge evidence</text>
+  <text x="615" y="217" text-anchor="middle" fill="#9aa3b5" font-size="9">join datasets</text>
+
+  <!-- ground check diamond -->
+  <polygon points="738,151 794,199 738,247 682,199" fill="#3d2222" stroke="#e06c6c"/>
+  <text x="738" y="196" text-anchor="middle" fill="#e6e9f0" font-size="12" font-weight="600">ground</text>
+  <text x="738" y="212" text-anchor="middle" fill="#e6e9f0" font-size="12" font-weight="600">check</text>
+
+  <!-- answer -->
+  <rect x="828" y="161" width="118" height="76" rx="8" fill="#1e3a30" stroke="#3fb98c"/>
+  <text x="887" y="186" text-anchor="middle" fill="#e6e9f0" font-size="13" font-weight="600">answer</text>
+  <text x="887" y="204" text-anchor="middle" fill="#9aa3b5" font-size="9">JSON + confidence</text>
+  <text x="887" y="217" text-anchor="middle" fill="#9aa3b5" font-size="9">or abstain</text>
+
+  <!-- main arrows -->
+  <line x1="66" y1="199" x2="76" y2="199" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="173" y1="199" x2="182" y2="199" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- route -> calc lane -->
+  <path d="M 233 157 L 233 96 L 310 96" fill="none" stroke="#e0a83c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="242" y="88" fill="#e0a83c" font-size="9.5">calculation</text>
+  <!-- route -> semantic lane -->
+  <path d="M 233 241 L 233 304 L 310 304" fill="none" stroke="#4db8c8" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="242" y="296" fill="#4db8c8" font-size="9.5">semantic</text>
+
+  <line x1="420" y1="96" x2="446" y2="96" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+  <path d="M 556 96 L 615 96 L 615 159" fill="none" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+  <path d="M 420 304 L 615 304 L 615 239" fill="none" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <line x1="665" y1="199" x2="680" y2="199" stroke="#9aa3b5" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="794" y1="199" x2="826" y2="199" stroke="#3fb98c" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="810" y="190" text-anchor="middle" fill="#3fb98c" font-size="9">supported</text>
+
+  <!-- retry loop: ground check -> plan -->
+  <path d="M 738 151 L 738 30 L 125 30 L 125 159" fill="none" stroke="#e0a83c" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="430" y="22" text-anchor="middle" fill="#e0a83c" font-size="10.5">evidence gaps &amp; retries &lt; 2 → refine plan, retrieve again</text>
+
+  <!-- retry cap: ground check -> answer -->
+  <path d="M 738 247 L 738 366 L 887 366 L 887 239" fill="none" stroke="#9aa3b5" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+  <text x="812" y="384" text-anchor="middle" fill="#9aa3b5" font-size="10.5">retries ≥ 2 → best-effort, low confidence / abstain</text>
+</svg>
+</div>
+<p class="sub">Two lanes after the router: <b>calculation</b> questions take the structured-lookup + deterministic-math lane; <b>semantic</b> questions ("why", "describe", "compare in words") take the vector-search lane; <b>hybrid</b> questions run both, and <code>combine</code> merges all evidence. The <code>ground &rarr; plan</code> loop retries on gaps; the retry cap guarantees termination.</p>
+
+<h2>3 &middot; State &amp; I/O contract</h2>
+<pre><code><span class="k">class</span> <span class="f">State</span>(TypedDict):
+    question: str
+    plan: list[dict]          <span class="c"># [{dataset, sub_query}, ...]</span>
+    evidence: list[dict]      <span class="c"># [{source, record, note}, ...]</span>
+    calculations: list[dict]  <span class="c"># [{op, inputs, result}]  ← the reproducibility log</span>
+    draft: str
+    grounded: bool
+    retries: int</span></code></pre>
+<p><b>Output schema</b> (every answer, benchmark-ready):</p>
+<pre><code>{
+  <span class="s">"answer"</span>: <span class="s">"RBA cash rate rose 0.25pp while ASX bank stocks gained 3.1% over the same window."</span>,
+  <span class="s">"value"</span>: 3.1,                       <span class="c">// numeric answer when applicable — exact-match scorable</span>
+  <span class="s">"evidence"</span>: [
+    {<span class="s">"source"</span>: <span class="s">"rates.json#2026-06-03"</span>, <span class="s">"quote"</span>: <span class="s">"cash_rate: 4.35"</span>},
+    {<span class="s">"source"</span>: <span class="s">"stocks.json#CBA#2026-06-03"</span>, <span class="s">"quote"</span>: <span class="s">"close: 128.40"</span>}
+  ],
+  <span class="s">"calculations"</span>: [{<span class="s">"op"</span>: <span class="s">"pct_change"</span>, <span class="s">"inputs"</span>: [124.5, 128.4], <span class="s">"result"</span>: 3.13}],
+  <span class="s">"confidence"</span>: 0.86,
+  <span class="s">"abstained"</span>: false
+}</code></pre>
+
+<h2>4 &middot; Key node implementations</h2>
+
+<h3>Calculator — reproducible by construction</h3>
+<pre><code><span class="k">import</span> statistics
+
+OPS = {
+    <span class="s">"pct_change"</span>: <span class="k">lambda</span> a, b: round((b - a) / a * 100, 2),
+    <span class="s">"mean"</span>:       <span class="k">lambda</span> *xs: round(statistics.mean(xs), 4),
+    <span class="s">"correlation"</span>:<span class="k">lambda</span> xs, ys: round(statistics.correlation(xs, ys), 3),
+}
+
+<span class="k">def</span> <span class="f">calculate</span>(state):
+    calcs = []
+    <span class="k">for</span> step <span class="k">in</span> plan_math_steps(state[<span class="s">"plan"</span>], state[<span class="s">"evidence"</span>]):
+        result = OPS[step[<span class="s">"op"</span>]](*step[<span class="s">"inputs"</span>])
+        calcs.append({**step, <span class="s">"result"</span>: result})   <span class="c"># log inputs + op + result</span>
+    <span class="k">return</span> {<span class="s">"calculations"</span>: calcs}</code></pre>
+
+<h3>Cross-dataset combine — join in code, synthesize with LLM</h3>
+<pre><code><span class="k">def</span> <span class="f">combine</span>(state):
+    <span class="c"># deterministic join, e.g. align rates & stocks on date</span>
+    joined = join_on_date(state[<span class="s">"evidence"</span>])
+    prompt = (<span class="s">"Answer using ONLY this evidence and these computed results.\n"</span>
+              <span class="s">f"Evidence: {joined}\nCalculations: {state['calculations']}\n"</span>
+              <span class="s">f"Question: {state['question']}\n"</span>
+              <span class="s">"Cite [source] tags for every claim. If evidence is insufficient, say INSUFFICIENT."</span>)
+    <span class="k">return</span> {<span class="s">"draft"</span>: llm.invoke(prompt).content}</code></pre>
+
+<h3>Router — CALC vs SEMANTIC vs HYBRID</h3>
+<pre><code><span class="k">def</span> <span class="f">route_question</span>(state):
+    label = llm.invoke(
+        <span class="s">"Classify this question. Reply ONE word:\n"</span>
+        <span class="s">"CALC = needs arithmetic on numbers (change, average, correlation)\n"</span>
+        <span class="s">"SEMANTIC = asks for meaning, causes, context, description, comparison in words\n"</span>
+        <span class="s">"HYBRID = both\n"</span>
+        <span class="s">f"Question: {state['question']}"</span>).content.strip().upper()
+    <span class="k">return</span> {<span class="s">"route"</span>: label <span class="k">if</span> label <span class="k">in</span> {<span class="s">"CALC"</span>,<span class="s">"SEMANTIC"</span>,<span class="s">"HYBRID"</span>} <span class="k">else</span> <span class="s">"HYBRID"</span>}
+
+<span class="c"># wiring: unknown → HYBRID (run both lanes) — safe default, never a dead end</span>
+g.add_conditional_edges(<span class="s">"route"</span>, <span class="k">lambda</span> s: s[<span class="s">"route"</span>],
+    {<span class="s">"CALC"</span>: <span class="s">"retrieve"</span>, <span class="s">"SEMANTIC"</span>: <span class="s">"semantic_search"</span>, <span class="s">"HYBRID"</span>: <span class="s">"retrieve"</span>})
+<span class="c"># for HYBRID: retrieve → calculate → semantic_search → combine (run lanes in sequence)</span></code></pre>
+
+<h3>Semantic lane — verbalize records, then vector-search them</h3>
+<pre><code><span class="c"># AT STARTUP — turn every JSON record into a sentence, so numbers become semantically searchable</span>
+<span class="k">from</span> langchain_core.documents <span class="k">import</span> Document
+docs = []
+<span class="k">for</span> rec <span class="k">in</span> rates:
+    docs.append(Document(
+        page_content=<span class="s">f"On {rec['date']}, the {rec['series']} was {rec['value']}"</span>
+                     <span class="s">f" ({'up' if rec['change']>0 else 'down'} {abs(rec['change'])} from previous)."</span>,
+        metadata={<span class="s">"source"</span>: <span class="s">f"rates.json#{rec['date']}"</span>}))
+<span class="c"># if a dataset has real text (news headlines, notes) — index that text directly</span>
+vectordb = FAISS.from_documents(docs, embeddings)
+
+<span class="k">def</span> <span class="f">semantic_search</span>(state):
+    hits = vectordb.similarity_search(state[<span class="s">"question"</span>], k=8)
+    ev = [{<span class="s">"source"</span>: h.metadata[<span class="s">"source"</span>], <span class="s">"record"</span>: h.page_content} <span class="k">for</span> h <span class="k">in</span> hits]
+    <span class="k">return</span> {<span class="s">"evidence"</span>: state[<span class="s">"evidence"</span>] + ev}   <span class="c"># same ledger — combine treats both lanes alike</span></code></pre>
+<div class="callout"><b>The verbalization trick:</b> pure numeric datasets can't answer "why"-style questions directly — but rendering each row as a sentence ("On 2026-06-03 the cash rate rose 25bp to 4.35%") makes trends and events findable by embedding similarity. Both lanes write to the same tagged <code>evidence[]</code> ledger, so grounding, citations, and confidence work identically for semantic answers. And when the data simply doesn't contain the cause ("why did the RBA hike?" with no news dataset), the honest answer is what the ground-check enforces: describe what the data <i>shows</i>, flag what it <i>can't show</i>, and lower confidence.</div>
+
+<h3>Calibrated confidence — computed, not asked</h3>
+<pre><code><span class="k">def</span> <span class="f">confidence</span>(state):
+    coverage  = datasets_hit(state) / datasets_needed(state[<span class="s">"plan"</span>])   <span class="c"># found what we needed?</span>
+    citations = cited_fraction(state[<span class="s">"draft"</span>], state[<span class="s">"evidence"</span>])     <span class="c"># claims backed by sources?</span>
+    math_ok   = 1.0 <span class="k">if</span> state[<span class="s">"calculations"</span>] <span class="k">else</span> 0.7               <span class="c"># numbers from code?</span>
+    score = round(0.5*coverage + 0.35*citations + 0.15*math_ok, 2)
+    <span class="k">return</span> {<span class="s">"confidence"</span>: score, <span class="s">"abstained"</span>: score &lt; 0.4}</code></pre>
+<div class="callout"><b>Why this wins on "calibrated":</b> most teams ask the LLM "how confident are you?" — models are notoriously overconfident. Computing confidence from measurable signals (dataset coverage, citation rate, whether math came from code) gives scores that actually track accuracy, and you can prove it: bucket benchmark answers by confidence and show accuracy rises with the bucket.</div>
+
+<h3>Grounding rules — the system prompt that enforces "supplied data only"</h3>
+<pre><code>SYSTEM_PROMPT = <span class="s">"""You are a market data analyst. Hard rules:
+1. Use ONLY the evidence and calculations supplied in the prompt — never your own
+   knowledge of markets, rates, or companies. If it's not in the evidence, it doesn't exist.
+2. Every claim must cite a [source] tag copied verbatim from the evidence.
+3. All numbers must come from the calculations block — never compute or recall numbers yourself.
+4. If the evidence cannot answer the question, reply INSUFFICIENT — an honest
+   'the data doesn't show this' is a correct answer, not a failure."""</span></code></pre>
+<div class="callout"><b>Honest uncertainty, concretely:</b> uncertainty is communicated in three places — the computed <code>confidence</code> score (from coverage/citations/math signals, not the LLM's self-report), the <code>abstained</code> flag when evidence is insufficient, and hedged language in the answer text itself when confidence is mid-range ("the data suggests…" vs "the data shows…"). The ground-check node rejects drafts that state low-coverage claims without hedging.</div>
+
+<h2>5 &middot; Beating the benchmark tiers</h2>
+<table>
+  <tr><th>Tier</th><th>Typical question</th><th>Path through the graph</th></tr>
+  <tr><td><span class="pill green">Easy</span></td><td>"What was the cash rate on 3 June?"</td><td>plan &rarr; retrieve (1 dataset) &rarr; answer. No math, single lookup, confidence high.</td></tr>
+  <tr><td><span class="pill amber">Medium</span></td><td>"How much did CBA gain in June?"</td><td>+ calculate: retrieve range, <code>pct_change</code> in code, cite both endpoints.</td></tr>
+  <tr><td><span class="pill red">Hard / cross-dataset</span></td><td>"Did bank stocks outperform the rate move after the June decision?"</td><td>plan splits into 2 sub-queries &rarr; retrieve both datasets &rarr; calculate per-dataset &rarr; combine joins on date &rarr; ground-check &rarr; answer.</td></tr>
+  <tr><td><span class="pill blue">Semantic</span></td><td>"How would you characterize rate movements in Q2?" / "Why did stocks fall in June?"</td><td>route &rarr; semantic lane: vector search over verbalized records &rarr; combine &rarr; answer describes what the data shows, hedges what it can't, confidence reflects coverage.</td></tr>
+</table>
+<ul>
+  <li><b>Exact-match safety:</b> put the bare numeric in <code>"value"</code> — graders often string/number-match; don't bury the number in prose.</li>
+  <li><b>Abstention scores points:</b> on unanswerable questions, <code>"abstained": true</code> with low confidence usually beats a confident hallucination.</li>
+  <li><b>Run the benchmark early:</b> even 10 questions through the pipeline in hour one exposes format bugs before they cost you the leaderboard.</li>
+</ul>
+
+<h2>6 &middot; Self-evaluation harness (run before submitting)</h2>
+<pre><code><span class="k">def</span> <span class="f">run_benchmark</span>(agent, questions):
+    results = []
+    <span class="k">for</span> q <span class="k">in</span> questions:
+        out = agent.invoke({<span class="s">"question"</span>: q[<span class="s">"text"</span>], <span class="s">"retries"</span>: 0})
+        results.append({
+            <span class="s">"id"</span>: q[<span class="s">"id"</span>],
+            <span class="s">"schema_ok"</span>: validate_schema(out),
+            <span class="s">"citations_real"</span>: all(quote_in_source(e) <span class="k">for</span> e <span class="k">in</span> out[<span class="s">"evidence"</span>]),
+            <span class="s">"reproducible"</span>: agent.invoke(...) == out,   <span class="c"># run twice → identical?</span>
+            <span class="s">"confidence"</span>: out[<span class="s">"confidence"</span>],
+        })
+    <span class="k">return</span> results   <span class="c"># then: accuracy per confidence-bucket = calibration proof</span></code></pre>
+
+<div class="callout warn"><b>Time budget suggestion:</b> 20% skeleton graph end-to-end with stub nodes &rarr; 40% retrieval + calculator on the real JSON &rarr; 20% cross-dataset combine &rarr; 20% calibration + benchmark runs. A complete simple agent beats an incomplete clever one.</div>
+
+</div>
+</body>
+</html>
