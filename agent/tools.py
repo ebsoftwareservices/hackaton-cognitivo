@@ -134,6 +134,7 @@ def rba_rate_on(date):
     row = df.iloc[-1]
     return {"as_of": str(d.date()),
             "target_pct": float(row["target"]),
+            "target_formatted": f"{float(row['target']):.2f}%",
             "in_force_since": str(row["date"].date())}
 
 
@@ -227,20 +228,21 @@ def asx_basket_return(start, end, exclude=None):
     """Equal-weight basket: per-ticker close-to-close % return over the window, averaged."""
     if ASX.empty:
         return {"error": "ASX data not loaded"}
-    rets, used = {}, None
+    raw, used = {}, None
     for t, g in ASX.groupby("ticker"):
         if _excluded(t, exclude):
             continue
         g = g[(g["date"] >= _dt(start)) & (g["date"] <= _dt(end))].sort_values("date")
         if len(g) < 2:
             continue
-        rets[t] = round(float((g.iloc[-1]["close"] / g.iloc[0]["close"] - 1) * 100), 2)
+        raw[t] = float((g.iloc[-1]["close"] / g.iloc[0]["close"] - 1) * 100)
         used = (str(g.iloc[0]["date"].date()), str(g.iloc[-1]["date"].date()))
-    if not rets:
+    if not raw:
         return {"error": "no data in that window"}
+    ranked = dict(sorted(raw.items(), key=lambda kv: kv[1], reverse=True))
     return {"window": {"from": used[0], "to": used[1]},
-            "per_ticker_return_pct": dict(sorted(rets.items(), key=lambda kv: kv[1], reverse=True)),
-            "basket_equal_weight_return_pct": round(sum(rets.values()) / len(rets), 2)}
+            "per_ticker_return_pct": {k: round(v, 2) for k, v in ranked.items()},
+            "basket_equal_weight_return_pct": round(sum(raw.values()) / len(raw), 2)}
 
 
 def asx_drawdowns(exclude=None, top=3):
@@ -267,7 +269,7 @@ def asx_drawdowns(exclude=None, top=3):
 
 
 def afr_count(terms, year=None):
-    """Case-insensitive whole-word search, counted once per record. terms: word or list of words (OR)."""
+    """Case-insensitive whole-word search, counted once per record. terms: word or list (OR)."""
     recs = _afr_records()
     if not recs:
         return {"error": "AFR data not loaded"}
@@ -309,10 +311,27 @@ def afr_find(query, date=None):
         matches = exact or matches
     if not matches:
         return {"error": f"no AFR article matching '{query}'" +
-                         (f" on {date}" if date else "") +
-                         " in the loaded AFR data"}
+                         (f" on {date}" if date else "") + " in the loaded AFR data"}
     return {"matches": [{"date": r["date"], "headline": r["headline"],
                          "excerpt": r["blob"][:700]} for r in matches[:2]]}
+
+
+def afr_sentiment(query, date=None):
+    """Retrieve an AFR article and classify its financial-market sentiment with the
+    fine-tuned finance model (nemotron-8b-finance)."""
+    found = afr_find(query, date)
+    if "error" in found:
+        return found
+    from config import llm_finance
+    art = found["matches"][0]
+    verdict = llm_finance.invoke(
+        "Classify the financial-market sentiment of this news article as exactly one of: "
+        "positive, negative, or mixed. Then state the likely short-term direction for the "
+        "relevant ASX shares (upward, downward, or mixed) in one sentence.\n\n"
+        f"HEADLINE: {art['headline']}\nARTICLE: {art['excerpt']}").content
+    return {"headline": art["headline"], "date": art["date"],
+            "model": "nemotron-8b-finance (team fine-tune)",
+            "sentiment_analysis": verdict[:500]}
 
 
 def dataset_coverage():
@@ -340,7 +359,8 @@ TOOLS = {"rba_summary": rba_summary, "rba_rate_on": rba_rate_on,
          "asx_avg_volume": asx_avg_volume, "asx_price": asx_price,
          "asx_period_change": asx_period_change, "asx_basket_return": asx_basket_return,
          "asx_drawdowns": asx_drawdowns, "afr_count": afr_count,
-         "afr_find": afr_find, "dataset_coverage": dataset_coverage}
+         "afr_find": afr_find, "afr_sentiment": afr_sentiment,
+         "dataset_coverage": dataset_coverage}
 
 CATALOG = """rba_summary(start?, end?) -> RBA decisions: changed/increases/decreases counts, start/end target %, total change in pp, per-year cuts/hikes.
 rba_rate_on(date) -> the cash-rate target in force on a given date.
@@ -352,5 +372,6 @@ asx_period_change(ticker, start, end) -> one ticker's close-to-close % change ov
 asx_basket_return(start, end, exclude?) -> per-ticker AND equal-weight basket % return over a date window. Use for "basket" questions.
 asx_drawdowns(exclude?, top?) -> worst maximum drawdowns with peak/trough dates.
 afr_count(terms, year?) -> whole-word once-per-record count of a word (or list of words, OR-matched) across AFR articles; per-year and peak months.
-afr_find(query, date?) -> retrieve AFR article(s) by headline text, with excerpt. Use when asked to retrieve a specific article.
+afr_find(query, date?) -> retrieve AFR article(s) by headline text, with excerpt.
+afr_sentiment(query, date?) -> retrieve an AFR article AND classify its financial-market sentiment (positive/negative/mixed) plus likely ASX direction, using the team's fine-tuned finance model. Use for sentiment questions.
 dataset_coverage() -> date ranges of RBA, ASX, AFR datasets. Use for "can the data support X" questions."""

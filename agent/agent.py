@@ -15,6 +15,13 @@ class State(TypedDict):
     retries: int
     final: dict
 
+def _tool_errors(calcs):
+    n = 0
+    for c in calcs or []:
+        if "error" in c or (isinstance(c.get("result"), dict) and "error" in c["result"]):
+            n += 1
+    return n
+
 def route(state):
     label = llm.invoke(
         "Classify which data this question needs. Reply exactly one word: "
@@ -42,6 +49,8 @@ def analyze(state):
         try:
             result = tools.TOOLS[c["tool"]](**c.get("args", {}))
             calcs.append({"tool": c["tool"], "args": c.get("args", {}), "result": result})
+            if isinstance(result, dict) and "error" in result:
+                continue  # errors are logged in calculations but are NOT citable evidence
             ev.append({"source": f"tool:{c['tool']}", "record": json.dumps(result)[:900]})
         except Exception as e:
             calcs.append({"tool": c.get("tool"), "args": c.get("args", {}), "error": str(e)})
@@ -72,12 +81,14 @@ def combine(state):
         "2. Numbers must come only from the calculations or evidence.\n"
         "3. State key numbers explicitly: counts, percentages to 2 decimals, large numbers "
         "with thousands separators (e.g. 11,635,671), dates and tickers by name.\n"
-        "4. You MAY draw simple analytical inferences FROM the evidence text — e.g. classify "
-        "an article's sentiment or the likely market direction it implies — as long as the "
-        "inference is clearly based on cited evidence.\n"
-        "5. Approximate references like 'mid January' are fine — use the closest evidence "
+        "4. You MAY draw simple analytical inferences (sentiment, likely market direction) "
+        "but ONLY from retrieved article text in the evidence — NEVER from the question's "
+        "own wording. If an article was not found, say that part cannot be determined from "
+        "the loaded data and do not guess.\n"
+        "5. If a tool reported an error for part of the question, state plainly that this "
+        "part is unavailable; answer the parts that have evidence.\n"
+        "6. Approximate references like 'mid January' are fine — use the closest evidence "
         "and say which date(s) you used.\n"
-        "6. Answer with what the data shows, even if partial; note gaps honestly.\n"
         "7. Reply INSUFFICIENT only when NO evidence relates to the question at all.\n"
         "8. Be concise but complete: cover every part of the question.\n"
         + retry_note +
@@ -101,7 +112,9 @@ def answer(state):
     citation_rate = len(used) / len(cited) if cited else 0.0
     coverage = min(1.0, len(used) / 2)
     math_ok = 1.0 if state.get("calculations") else 0.7
-    conf = round(0.45 * coverage + 0.4 * citation_rate + 0.15 * math_ok, 2)
+    conf = 0.45 * coverage + 0.4 * citation_rate + 0.15 * math_ok
+    conf -= 0.25 * min(_tool_errors(state.get("calculations")), 2)
+    conf = round(max(0.15, min(conf, 0.95)), 2)
     insufficient = state["draft"].strip().upper().startswith("INSUFFICIENT")
     return {"final": {"answer": state["draft"],
                       "evidence": used,

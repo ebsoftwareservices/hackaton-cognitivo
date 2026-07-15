@@ -2,21 +2,18 @@
 graph TD;
     __start__([start]):::first
     route(route)
-    retrieve_numeric(retrieve_numeric)
+    analyze(analyze)
     semantic_search(semantic_search)
-    calculate(calculate)
     combine(combine)
     ground_check(ground_check)
     answer(answer)
     __end__([end]):::last
     __start__ --> route;
-    route -.-> retrieve_numeric;
+    route -.-> analyze;
     route -.-> semantic_search;
-    retrieve_numeric -.-> calculate;
-    retrieve_numeric -.-> semantic_search;
-    semantic_search -.-> calculate;
-    semantic_search -.-> combine;
-    calculate --> combine;
+    analyze -.-> combine;
+    analyze -.-> semantic_search;
+    semantic_search --> combine;
     combine --> ground_check;
     ground_check -.-> answer;
     ground_check -.-> combine;
